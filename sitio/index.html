@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<title>Campus virtual</title>
+<link rel="icon" href="logo.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<a class="saltar" href="#contenido">Saltar al contenido</a>
+<div class="wrap">
+  <header id="barra"></header>
+  <main id="contenido">
+    <section class="portada-inicio" aria-labelledby="titulo">
+      <div>
+        <h1 id="titulo"></h1>
+        <p class="sub" id="descripcion"></p>
+        <div class="acciones"><a class="btn" href="#catalogo">Ver los cursos</a></div>
+      </div>
+      <ol class="recorrido" aria-label="Cómo funciona">
+        <li><span class="punto" aria-hidden="true">1</span><b>Elige un curso</b><span>Gratis y a tu ritmo</span></li>
+        <li><span class="punto" aria-hidden="true">2</span><b>Aprueba cada módulo</b><span id="paso2"></span></li>
+        <li><span class="punto" aria-hidden="true" id="icono-cert"></span><b>Descarga tu certificado</b><span>Al completar el curso</span></li>
+      </ol>
+    </section>
+
+    <section id="mios" class="seccion" hidden aria-labelledby="t-mios">
+      <h2 id="t-mios" class="titulo-seccion">Tus cursos</h2>
+      <div class="grid-cursos" id="lista-mios"></div>
+    </section>
+
+    <section id="catalogo" class="seccion" aria-labelledby="t-todos">
+      <div class="encabezado-seccion">
+        <h2 id="t-todos" class="titulo-seccion">Todos los cursos</h2>
+        <div class="buscar">
+          <label for="q" class="sr">Buscar curso</label>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+          <input id="q" type="search" placeholder="Buscar curso" autocomplete="off">
+        </div>
+      </div>
+      <p class="msg" id="conteo" aria-live="polite"></p>
+      <div class="grid-cursos" id="lista" aria-busy="true"></div>
+    </section>
+
+    <section class="faq" aria-labelledby="t-faq">
+      <div class="lado">
+        <h2 id="t-faq" class="titulo-seccion">Preguntas frecuentes</h2>
+        <p class="msg" id="contacto" hidden></p>
+      </div>
+      <div>
+        <details><summary>¿Qué es el ID de estudiante?</summary>
+          <p>Es tu clave personal para el campus, por ejemplo <code>DPREDU-ALM-7F3K9</code>: el prefijo del campus, las iniciales de tu nombre y un código. Lo creas una sola vez al registrarte y sirve para todos los cursos. Con él retomas tu avance desde cualquier computadora o celular.</p></details>
+        <details><summary>Perdí mi ID, ¿qué hago?</summary>
+          <p>Pulsa «Ingresar con mi ID» y luego «Olvidé mi ID». Te lo reenviamos al correo con el que te registraste. Revisa también la carpeta de spam.</p></details>
+        <details><summary>Hice la evaluación y el siguiente módulo sigue bloqueado</summary>
+          <p>Regresa a la pestaña del curso: tu avance se actualiza solo en unos segundos. Si no cambia, pulsa «Actualizar». Necesitas <span class="nota-min"></span> o más, y el ID que viene en el formulario no debe modificarse.</p></details>
+        <details><summary>¿Puedo repetir una evaluación?</summary>
+          <p>Sí, todas las veces que necesites. Siempre cuenta tu mejor nota.</p></details>
+        <details><summary>¿Cuándo recibo mi certificado de participación?</summary>
+          <p>Al aprobar la evaluación final se habilita una breve encuesta. Al enviarla, se activa la descarga del certificado en la página del curso.</p></details>
+        <details><summary>¿Por qué debo responder una encuesta?</summary>
+          <p>Nos ayuda a conocer a quienes participan y a mejorar los cursos. Se responde una vez por curso, al terminarlo, y es el último paso para descargar tu certificado.</p></details>
+        <details><summary>¿Cómo se verifica un certificado?</summary>
+          <p>Cada certificado tiene un código. Cualquier persona puede comprobarlo en <a href="verificar.html">Verificar un certificado</a>.</p></details>
+      </div>
+    </section>
+  </main>
+  <footer id="pie"></footer>
+</div>
+<script src="config.js"></script>
+<script src="app.js"></script>
+<script>
+(() => {
+  const { S, api, h, Sesion, catalogo, pedirId, barra, ICONOS } = App;
+  const $ = id => document.getElementById(id);
+  document.title = `${S.titulo} · ${S.institucion}`;
+  $("titulo").textContent = S.lema || S.titulo;
+  $("descripcion").textContent = S.descripcion;
+  $("paso2").textContent = `Con ${S.notaMinima}% o más en cada evaluación`;
+  $("icono-cert").innerHTML = ICONOS.medalla;
+  document.querySelectorAll(".nota-min").forEach(e => e.textContent = S.notaMinima + "%");
+  if (S.contacto) { $("contacto").hidden = false; $("contacto").append("¿Otra duda? Escríbenos a ", h("a", { href: "mailto:" + S.contacto }, S.contacto), "."); }
+  $("pie").replaceChildren(h("p", {}, S.institucionCompleta || S.institucion),
+    h("p", {}, "Contenido bajo licencia Creative Commons BY-SA 4.0. ", h("a", { href: "verificar.html" }, "Verificar un certificado")));
+
+  let cursos = [], mios = {};
+
+  async function cargar() {
+    barra(cargar);
+    $("lista").setAttribute("aria-busy", "true");
+    $("lista").replaceChildren(...[1, 2, 3].map(() => h("div", { class: "tarjeta cargando", "aria-hidden": "true" })));
+    try { cursos = await catalogo(); }
+    catch (e) {
+      $("lista").replaceChildren(h("div", { class: "error-carga" },
+        h("p", {}, "No se pudieron cargar los cursos. Revisa tu conexión a internet."),
+        h("button", { class: "btn", onclick: cargar }, "Reintentar")));
+      return;
+    }
+    mios = {};
+    const id = Sesion.id();
+    if (id) {
+      try { const r = await api("ingresar", { id }); if (r.ok) mios = r.cursos; else { Sesion.salir(); barra(cargar); } } catch (e) {}
+    }
+    pintar();
+  }
+
+  const normal = t => String(t || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+  function pintar() {
+    const q = normal($("q").value.trim());
+    const inscritos = cursos.filter(c => mios[c.id]);
+    $("mios").hidden = !inscritos.length;
+    $("lista-mios").replaceChildren(...inscritos.map(c => tarjeta(c, mios[c.id])));
+    // "Todos los cursos" siempre muestra el catálogo completo, con el estado de cada uno
+    const lista = cursos.filter(c => !q || normal(c.titulo + " " + c.descripcion).includes(q));
+    $("lista").setAttribute("aria-busy", "false");
+    $("conteo").textContent = q
+      ? `${lista.length} ${lista.length === 1 ? "curso coincide" : "cursos coinciden"} con «${$("q").value.trim()}»`
+      : `${cursos.length} ${cursos.length === 1 ? "curso disponible" : "cursos disponibles"}`;
+    $("lista").replaceChildren(...(lista.length ? lista.map(c => tarjeta(c, mios[c.id])) : [h("div", { class: "vacio" },
+      h("p", {}, cursos.length ? "Ningún curso coincide con esa búsqueda. Prueba con otra palabra, por ejemplo «riesgo» o «volcán»." : "Pronto publicaremos cursos aquí."),
+      cursos.length ? h("button", { class: "link", onclick: () => { $("q").value = ""; pintar(); $("q").focus(); } }, "Ver todos los cursos") : null)]));
+  }
+
+  let tBusqueda;
+  $("q").addEventListener("input", () => {
+    pintar();
+    clearTimeout(tBusqueda);
+    const q = $("q").value.trim();
+    if (q.length > 2) tBusqueda = setTimeout(() => App.evento("search", { search_term: q }), 1200);
+  });
+
+  const IC_MOD = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 19V5a2 2 0 0 1 2-2h12v18H6a2 2 0 0 1-2-2zm0 0a2 2 0 0 1 2-2h12"/></svg>';
+  const IC_RELOJ = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>';
+
+  function tarjeta(c, p) {
+    const n = c.modulos.filter(m => m.tipo !== "final").length;
+    const accion = p ? (p.certificado ? "Ver curso" : p.faltaEncuesta ? "Completar encuesta" : "Continuar") : "Empezar curso";
+    const estado = !p ? null : p.certificado ? ["Completado", "ok"] : p.faltaEncuesta ? ["Falta la encuesta", "pend"] : ["En curso", ""];
+    return h("article", { class: "tarjeta" },
+      estado ? h("span", { class: "etiqueta " + estado[1] }, estado[0]) : null,
+      h("h3", {}, h("a", { href: "curso.html?c=" + encodeURIComponent(c.id), "aria-label": `${c.titulo}. ${accion}`, onclick: e => { e.preventDefault(); abrir(c); } }, c.titulo)),
+      h("p", { class: "desc" }, c.descripcion),
+      h("p", { class: "datos-curso" },
+        h("span", {}, h("span", { html: IC_MOD }), `${n} ${n === 1 ? "módulo" : "módulos"} y evaluación final`),
+        c.duracion ? h("span", {}, h("span", { html: IC_RELOJ }), c.duracion) : null),
+      h("div", { class: "pie-tarjeta" },
+        p ? h("div", { class: "avance" },
+              h("div", { class: "puntos", role: "img", "aria-label": `Avance: ${p.aprobados} de ${p.total} evaluaciones${p.certificado ? " y certificado" : ""}` },
+                Array.from({ length: p.total }, (_, i) => h("i", { class: i < p.aprobados ? "si" : "" })),
+                h("i", { class: "cert" + (p.certificado ? " si" : "") })),
+              h("span", {}, p.certificado ? "Certificado listo" : `${p.aprobados} de ${p.total} aprobadas`))
+          : h("span", { class: "meta" }, "Gratis"),
+        h("span", { class: "cta link", "aria-hidden": "true", style: "text-decoration:none;font-weight:600" }, accion)));
+  }
+
+  async function abrir(c) {
+    const id = Sesion.id() || await pedirId({ curso: c.titulo }) || Sesion.id();
+    if (id) location.href = "curso.html?c=" + encodeURIComponent(c.id);
+  }
+
+  cargar();
+})();
+</script>
+</body>
+</html>

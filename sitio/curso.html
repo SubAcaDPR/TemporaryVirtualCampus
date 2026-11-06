@@ -1,0 +1,318 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<title>Curso</title>
+<link rel="icon" href="logo.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<a class="saltar" href="#contenido">Saltar al contenido</a>
+<div class="wrap estrecho">
+  <header id="barra"></header>
+  <main id="contenido" aria-live="polite"><div class="card esqueleto alto" aria-hidden="true"></div></main>
+  <footer id="pie"></footer>
+</div>
+<script src="config.js"></script>
+<script src="app.js"></script>
+<script>
+(() => {
+  const { S, DEMO, api, h, Sesion, catalogo, pedirId, barra, aviso, ICONOS, evento } = App;
+  const cid = new URLSearchParams(location.search).get("c");
+  const main = document.getElementById("contenido");
+  document.getElementById("pie").replaceChildren(h("p", {}, S.institucionCompleta || S.institucion),
+    h("p", {}, "Contenido bajo licencia Creative Commons BY-SA 4.0 · ", h("a", { href: "verificar.html" }, "Verificar un certificado")));
+  let curso = null, prog = null, ultima = 0, cargando = false, pendiente = false, error = "";
+  const abiertos = new Set(); // evaluaciones que el estudiante ya abrió
+  let encuestaAbierta = false;
+
+  async function iniciar() {
+    barra(iniciar);
+    try { curso = (await catalogo()).find(c => c.id === cid); }
+    catch (e) {
+      main.replaceChildren(h("div", { class: "card error-carga" }, h("p", {}, "No pudimos cargar el curso. Revisa tu conexión a internet."),
+        h("button", { class: "btn", onclick: iniciar }, "Reintentar")));
+      return;
+    }
+    if (!curso) {
+      main.replaceChildren(h("div", { class: "card stack" }, h("h1", {}, "No encontramos este curso"),
+        h("p", {}, "Puede que el enlace esté incompleto o que el curso ya no esté disponible."),
+        h("p", {}, h("a", { class: "btn", href: "index.html" }, "Ver el catálogo de cursos"))));
+      return;
+    }
+    document.title = `${curso.titulo} · ${S.titulo}`;
+    await refrescar();
+  }
+
+  async function refrescar(manual) {
+    const id = Sesion.id();
+    if (!id) { prog = null; render(); return; }
+    if (cargando) { pendiente = true; return; } // se repite al terminar la consulta en curso
+    cargando = true; error = "";
+    const antes = prog;
+    marcarActualizando(true);
+    try {
+      const r = await api("progreso", { id, curso: cid, inscribir: true });
+      if (r.ok) prog = r;
+      else if (r.error === "ID no encontrado") { Sesion.salir(); barra(iniciar); prog = null; aviso("Tu ID ya no es válido en este dispositivo. Ingresa de nuevo."); }
+      else throw new Error(r.error);
+    } catch (e) { error = "No pudimos actualizar tu avance. Revisa tu conexión e inténtalo de nuevo."; }
+    cargando = false; ultima = Date.now();
+    anunciarCambios(antes, prog, manual);
+    render();
+    if (pendiente) { pendiente = false; refrescar(); }
+  }
+
+  function marcarActualizando(si) { const b = document.getElementById("estado-sync"); if (b) b.textContent = si ? "Actualizando tu avance…" : ""; }
+
+  // Avisa qué cambió desde la última consulta (visibilidad del estado)
+  function anunciarCambios(antes, ahora, manual) {
+    if (!ahora) return;
+    const ap = p => curso.modulos.filter(m => p && p.modulos && p.modulos[m.orden] && p.modulos[m.orden].aprobado).map(m => m.orden);
+    const nuevos = ap(ahora).filter(o => !ap(antes).includes(o));
+    nuevos.forEach(o => evento("modulo_aprobado", { curso_id: cid, modulo: o }));
+    if (antes && !antes.encuesta && ahora.encuesta) {
+      encuestaAbierta = false;
+      evento("encuesta_completada", { curso_id: cid });
+      aviso("¡Gracias por responder la encuesta! Ya puedes descargar tu certificado.", "ok");
+    } else if (antes && nuevos.length) {
+      const sig = siguiente();
+      aviso(sig ? `¡Aprobaste! Se desbloqueó: ${sig.titulo}` : "¡Aprobaste todas las evaluaciones!", "ok");
+      nuevos.forEach(o => abiertos.delete(o));
+    } else if (antes) {
+      const reprobo = curso.modulos.find(m => abiertos.has(m.orden) && (ahora.modulos[m.orden] || {}).intentos > ((antes.modulos[m.orden] || {}).intentos || 0));
+      if (reprobo) { aviso(`Recibimos tu evaluación: ${(ahora.modulos[reprobo.orden] || {}).mejor}%. Necesitas ${S.notaMinima}% para avanzar.`); abiertos.delete(reprobo.orden); }
+      else if (manual && encuestaAbierta && !ahora.encuesta) aviso("Aún no recibimos tu encuesta. Si ya la enviaste, espera unos segundos e inténtalo de nuevo.");
+      else if (manual) aviso(abiertos.size ? "Aún no recibimos tu evaluación. Si ya la enviaste, espera unos segundos e inténtalo de nuevo." : "Tu avance está al día.");
+    }
+  }
+
+  // Al volver de la pestaña del formulario, el avance se actualiza solo
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible" && curso && Sesion.id() && Date.now() - ultima > 3000) refrescar();
+  });
+
+  const estadoDe = m => (prog && prog.modulos && prog.modulos[m.orden]) || { aprobado: false, mejor: 0, intentos: 0 };
+
+  function estados() {
+    const mapa = new Map(); let bloqueado = false;
+    curso.modulos.filter(m => m.tipo !== "final").forEach(m => {
+      const e = estadoDe(m);
+      mapa.set(m, e.aprobado ? "aprobado" : bloqueado ? "bloqueado" : "disponible");
+      if (!e.aprobado) bloqueado = true;
+    });
+    curso.modulos.filter(m => m.tipo === "final").forEach(m => mapa.set(m, estadoDe(m).aprobado ? "aprobado" : bloqueado ? "bloqueado" : "disponible"));
+    return mapa;
+  }
+  const siguiente = () => { const e = estados(); return curso.modulos.find(m => e.get(m) === "disponible"); };
+
+  function render() {
+    const id = Sesion.id();
+    const mods = curso.modulos, est = estados();
+    const aprobados = mods.filter(m => estadoDe(m).aprobado).length;
+    const pct = mods.length ? Math.round(aprobados / mods.length * 100) : 0;
+    const sig = siguiente();
+
+    const partes = [
+      h("nav", { class: "migas", "aria-label": "Ruta" }, h("a", { href: "index.html" }, "Catálogo"), h("span", { "aria-hidden": "true" }, " › "), h("span", { "aria-current": "page" }, curso.titulo)),
+      h("section", { class: "cabecera" },
+        h("h1", {}, curso.titulo),
+        h("p", { class: "sub" }, curso.descripcion),
+        h("ul", { class: "datos" },
+          curso.duracion ? h("li", {}, "Duración: ", h("b", {}, curso.duracion)) : null,
+          h("li", {}, "Para aprobar: ", h("b", {}, S.notaMinima + "%"), " en cada evaluación"),
+          h("li", {}, "Evaluaciones: ", h("b", {}, "puedes repetirlas"))))
+    ];
+
+    if (!id) {
+      partes.push(h("div", { class: "card inscribir" },
+        h("div", {}, h("h2", {}, "Inscríbete para empezar"), h("p", { class: "msg" }, "Es gratis. Necesitas tu ID de estudiante para guardar tu avance.")),
+        h("div", { class: "acciones" },
+          h("button", { class: "btn", onclick: async () => { if (await pedirId({ curso: curso.titulo }) || Sesion.id()) iniciar(); } }, "Inscribirme"),
+          h("button", { class: "btn ghost", onclick: async () => { if (await pedirId({ vista: "ingreso" }) || Sesion.id()) iniciar(); } }, "Ya tengo ID"))));
+    } else {
+      const cert = prog && prog.certificado;
+      const encOk = !(prog && prog.encuestaRequerida) || prog.encuesta;
+      const certListo = cert && encOk;
+      const completo = mods.length && aprobados === mods.length;
+      partes.push(h("div", { class: "card progreso" + (certListo ? " terminado" : "") },
+        h("div", { class: "fila" },
+          h("h2", {}, certListo ? "¡Completaste tu ruta!" : "Tu ruta de aprendizaje"),
+          h("button", { class: "link", onclick: () => refrescar(true), disabled: cargando }, "Actualizar")),
+        h("p", { class: "msg" }, `${aprobados} de ${mods.length} evaluaciones aprobadas`),
+        diagrama(est),
+        h("p", { class: "msg", id: "estado-sync", "aria-live": "polite" }),
+        error ? h("div", { class: "nota warn fila" }, h("span", {}, error), h("button", { class: "btn sm", onclick: () => refrescar(true) }, "Reintentar")) : null,
+        certListo ? zonaCertificado(cert)
+          : completo && !encOk ? zonaEncuesta(id)
+          : completo ? h("div", { class: "nota ok" }, h("b", {}, "¡Listo! "), "Estamos generando tu certificado de participación; en unos minutos podrás descargarlo aquí y también llegará a tu correo.")
+          : sig ? h("div", { class: "acciones" },
+              h("a", { class: "btn", href: "#mod-" + sig.orden }, aprobados ? "Continuar donde lo dejé" : "Comenzar el curso"),
+              h("span", { class: "msg" }, "Siguiente: " + sig.titulo)) : null));
+    }
+
+    let n = 0;
+    partes.push(h("h2", { class: "titulo-seccion" }, "Contenido del curso"),
+      h("ol", { class: "modulos" }, mods.map(m => h("li", {}, tarjetaModulo(m, m.tipo === "final" ? null : ++n, est.get(m), estadoDe(m), id)))));
+    main.replaceChildren(...partes);
+  }
+
+  function tarjetaModulo(m, numero, estado, e, id) {
+    const esFinal = m.tipo === "final";
+    const etiquetas = { aprobado: "Aprobado", disponible: e.intentos ? "Pendiente" : (id ? "Disponible" : ""), bloqueado: "Bloqueado" };
+    let detalle;
+    if (estado === "aprobado") detalle = `Tu mejor nota: ${e.mejor}%`;
+    else if (estado === "bloqueado") detalle = esFinal ? "Se habilita al aprobar todos los módulos" : "Se habilita al aprobar el módulo anterior";
+    else if (e.intentos) detalle = `Tu mejor nota: ${e.mejor}% · necesitas ${S.notaMinima}%`;
+    else detalle = "";
+
+    const icono = estado === "aprobado" ? h("span", { html: ICONOS.check }) : estado === "bloqueado" ? h("span", { html: ICONOS.candado }) : (esFinal ? "F" : String(numero));
+    const cuerpo = h("div", { class: "cuerpo-mod" },
+      h("div", { class: "fila-titulo" },
+        h("h3", {}, m.titulo),
+        id && etiquetas[estado] ? h("span", { class: "etiqueta " + (estado === "aprobado" ? "ok" : estado === "bloqueado" ? "gris" : "") }, etiquetas[estado]) : null),
+      h("p", { class: "meta" }, [detalle, m.duracion].filter(Boolean).join(" · ")),
+      m.descripcion ? h("p", {}, m.descripcion) : null);
+
+    const enl = (prog && prog.enlaces && prog.enlaces[m.orden]) || {};
+    if (id && estado !== "bloqueado") {
+      const acciones = h("div", { class: "acciones" });
+      if (enl.contenido) acciones.append(h("a", { class: "btn ghost", href: enl.contenido, target: "_blank", rel: "noopener", onclick: () => evento("contenido_abierto", { curso_id: cid, modulo: m.orden }) }, "Ver contenido", h("span", { class: "sr" }, " (se abre en otra pestaña)")));
+      const etiqueta = estado === "aprobado" ? "Repetir evaluación" : e.intentos ? "Intentar de nuevo" : (esFinal ? "Hacer evaluación final" : "Hacer evaluación");
+      if (!enl.evaluacion) acciones.append(h("button", { class: "btn", disabled: true }, "Evaluación aún no disponible"));
+      else acciones.append(h("button", { class: estado === "aprobado" ? "btn ghost" : "btn", onclick: () => evaluar(m, enl.evaluacion) }, etiqueta));
+      cuerpo.append(acciones);
+
+      if (estado !== "aprobado" && e.intentos && !abiertos.has(m.orden)) cuerpo.append(h("p", { class: "nota warn" },
+        `Aún no alcanzas el ${S.notaMinima}%. Repasa el contenido e inténtalo de nuevo; siempre cuenta tu mejor nota.`));
+      if (abiertos.has(m.orden)) cuerpo.append(DEMO ? simulador(m, id) : h("div", { class: "nota" },
+        h("p", {}, h("b", {}, "Esperando tu resultado. "), "La evaluación se abrió en otra pestaña con tu ID ya incluido; no lo modifiques. Al enviarla, regresa aquí: tu avance se actualiza solo."),
+        h("div", { class: "acciones" }, h("button", { class: "btn sm", onclick: () => refrescar(true) }, "Ya la envié, actualizar"),
+          h("button", { class: "link", onclick: () => { abiertos.delete(m.orden); render(); } }, "Cancelar"))));
+    } else if (!id) {
+      cuerpo.append(h("p", { class: "msg" }, "Inscríbete para ver el contenido y hacer las evaluaciones."));
+    }
+    return h("article", { class: `card mod ${estado}${esFinal ? " final" : ""}`, id: "mod-" + m.orden, "aria-label": `${m.titulo}: ${etiquetas[estado] || ""}` },
+      h("div", { class: "num", "aria-hidden": "true" }, icono), cuerpo);
+  }
+
+  function evaluar(m, enlace) {
+    abiertos.add(m.orden);
+    evento("evaluacion_abierta", { curso_id: cid, modulo: m.orden });
+    if (!DEMO) window.open(enlace, "_blank", "noopener"); // el enlace ya trae el ID del estudiante
+    render();
+    const el = document.getElementById("mod-" + m.orden); if (el) el.scrollIntoView({ block: "nearest" });
+  }
+
+  // Solo en modo demo: simula el resultado del formulario
+  function simulador(m, id) {
+    const enviar = pct => async () => { await api("demoEvaluar", { id, curso: cid, orden: m.orden, pct }); refrescar(); };
+    return h("div", { class: "nota" }, h("p", {}, h("b", {}, "Modo demo: "), "simula el resultado del formulario."),
+      h("div", { class: "acciones" },
+        h("button", { class: "btn sm", onclick: enviar(90) }, "Enviar con 90%"),
+        h("button", { class: "btn ghost sm", onclick: enviar(60) }, "Enviar con 60%")));
+  }
+
+  // ---------- Diagrama de avance: se va formando de izquierda a derecha ----------
+  function diagrama(est) {
+    const cert = prog && prog.certificado;
+    let n = 0;
+    const nodos = curso.modulos.map(m => ({
+      m, estado: est.get(m), e: estadoDe(m),
+      etiqueta: m.tipo === "final" ? "Evaluación final" : "Módulo " + (++n),
+      corta: m.tipo === "final" ? "Final" : "Mód. " + n
+    }));
+    const todos = nodos.every(x => x.estado === "aprobado");
+    const req = !!(prog && prog.encuestaRequerida), encOk = !req || prog.encuesta;
+    if (req) nodos.push({ encuesta: true, etiqueta: "Encuesta", corta: "Encuesta", estado: encOk ? "aprobado" : todos ? "disponible" : "bloqueado" });
+    const certListo = cert && encOk;
+    nodos.push({ cert: true, etiqueta: "Certificado", corta: "Certif.", estado: certListo ? "aprobado" : todos && encOk ? "disponible" : "bloqueado" });
+
+    // Avance continuo desde el inicio (la línea llega hasta el primer paso pendiente)
+    let k = nodos.findIndex(x => x.estado !== "aprobado");
+    if (k < 0) k = nodos.length - 1;
+    const total = nodos.length - 1;
+    const clave = "ruta_" + cid + "_" + Sesion.id();
+    let previo = 0;
+    try { previo = Math.min(Number(sessionStorage.getItem(clave)) || 0, k); sessionStorage.setItem(clave, k); } catch (e) {}
+    const PASO = 420; // ms por tramo
+
+    const ol = h("ol", { class: "ruta-pasos", style: `--n:${nodos.length};--avance:${previo / total};--dur:${Math.max(1, k - previo) * PASO}ms`, "aria-label": "Ruta del curso" },
+      nodos.map((x, i) => {
+        const nuevo = x.estado === "aprobado" && i >= previo;
+        const icono = x.cert ? ICONOS.medalla
+          : x.encuesta ? (x.estado === "aprobado" ? ICONOS.check : ICONOS.encuesta)
+          : x.estado === "aprobado" ? ICONOS.check
+          : x.estado === "bloqueado" ? ICONOS.candado : "";
+        const contenidoPunto = icono ? h("span", { html: icono }) : String(x.m && x.m.tipo === "final" ? "F" : i + 1);
+        const detalle = x.cert ? (certListo ? "Descargar" : todos && encOk ? "Generando…" : "Al final")
+          : x.encuesta ? (x.estado === "aprobado" ? "Enviada" : x.estado === "disponible" ? "Pendiente" : "Al final")
+          : x.estado === "aprobado" ? x.e.mejor + "%"
+          : x.estado === "disponible" ? (x.e.intentos ? `Mejor: ${x.e.mejor}%` : "En curso")
+          : "Bloqueado";
+        const textoSr = `${x.etiqueta}: ${x.estado === "aprobado" ? "completado" : x.estado === "disponible" ? "en curso" : "bloqueado"}`;
+        let punto;
+        if (x.cert && certListo) punto = cert.url
+          ? h("a", { class: "punto", href: cert.url, target: "_blank", rel: "noopener", "aria-label": "Descargar certificado de participación", onclick: descargado }, contenidoPunto)
+          : h("button", { class: "punto", type: "button", "aria-label": "Descargar certificado de participación", onclick: descargarDemo }, contenidoPunto);
+        else if (x.encuesta && x.estado === "disponible") punto = h("a", { class: "punto", href: "#zona-encuesta", "aria-label": "Encuesta pendiente: ir a la encuesta" }, contenidoPunto);
+        else if (x.m) punto = h("a", { class: "punto", href: "#mod-" + x.m.orden, "aria-label": textoSr }, contenidoPunto);
+        else punto = h("span", { class: "punto", "aria-hidden": "true" }, contenidoPunto);
+        return h("li", { class: `nodo ${x.estado}${x.cert ? " cert" : ""}${x.encuesta ? " encuesta" : ""}${nuevo ? " nuevo" : ""}`,
+            style: nuevo ? `--retraso:${(i - previo) * PASO + 150}ms` : null, "aria-current": i === k && x.estado !== "aprobado" ? "step" : null },
+          punto, h("span", { class: "lbl" }, h("span", { class: "larga" }, x.etiqueta), h("span", { class: "corta", "aria-hidden": "true" }, x.corta)), h("span", { class: "det" }, detalle));
+      }));
+    // La línea crece después de pintarse
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      ol.style.setProperty("--avance", k / total);
+      const actual = ol.querySelector('[aria-current="step"]') || ol.lastElementChild;
+      const cont = ol.parentElement;
+      if (cont && cont.scrollWidth > cont.clientWidth) cont.scrollTo({ left: actual.offsetLeft - cont.clientWidth / 2 + actual.offsetWidth / 2, behavior: "smooth" });
+    }));
+    return h("div", { class: "ruta" }, ol);
+  }
+
+  function zonaCertificado(c) {
+    return h("div", { class: "zona-cert" },
+      h("p", {}, `Tu certificado de participación fue emitido el ${c.fecha}. Código de verificación: `, h("code", { class: "id" }, c.codigo)),
+      h("div", { class: "acciones" },
+        c.url ? h("a", { class: "btn grande", href: c.url, target: "_blank", rel: "noopener", onclick: descargado }, h("span", { class: "ic", html: ICONOS.descargar }), "Descargar certificado")
+              : h("button", { class: "btn grande", type: "button", onclick: descargarDemo }, h("span", { class: "ic", html: ICONOS.descargar }), "Descargar certificado"),
+        h("a", { class: "btn ghost", href: "verificar.html?c=" + encodeURIComponent(c.codigo) }, "Ver verificación"),
+        h("a", { class: "btn ghost", href: "index.html" }, "Explorar más cursos")),
+      h("p", { class: "msg" }, "También te lo enviamos por correo."));
+  }
+  function descargado() { evento("certificado_descargado", { curso_id: cid }); }
+
+  // Último paso antes del certificado: encuesta obligatoria (Microsoft Forms o Google Forms)
+  function zonaEncuesta(id) {
+    const ic = h("span", { class: "ic", html: ICONOS.encuesta });
+    return h("div", { class: "zona-cert", id: "zona-encuesta" },
+      h("h3", {}, "Último paso: cuéntanos sobre ti"),
+      h("p", { style: "margin-top:6px" }, "Para habilitar la descarga de tu certificado de participación, responde una breve encuesta. Tus respuestas nos ayudan a mejorar los cursos."),
+      h("div", { class: "acciones" },
+        DEMO ? h("button", { class: "btn grande", type: "button", onclick: async () => { await api("demoEncuesta", { id, curso: cid }); refrescar(); } }, ic, "Simular encuesta enviada (demo)")
+        : prog.encuestaUrl ? h("button", { class: "btn grande", type: "button", onclick: () => abrirEncuesta(id) }, ic, "Completar encuesta")
+        : h("button", { class: "btn", type: "button", disabled: true }, "Encuesta aún no disponible")),
+      encuestaAbierta ? h("div", { class: "nota" },
+        h("p", {}, h("b", {}, "Esperando tu encuesta. "), "Se abrió en otra pestaña con tu ID y el curso ya incluidos; no los modifiques. Al enviarla, regresa aquí: la descarga se habilita sola."),
+        h("div", { class: "acciones" }, h("button", { class: "btn sm", type: "button", onclick: () => refrescar(true) }, "Ya la envié, actualizar"))) : null);
+  }
+  function abrirEncuesta(id) {
+    encuestaAbierta = true;
+    evento("encuesta_abierta", { curso_id: cid });
+    window.open(prog.encuestaUrl, "_blank", "noopener"); // el servidor ya incluyó ID y curso
+    render();
+  }
+
+  function descargarDemo() { aviso("En modo demo no se genera el PDF. Con la hoja conectada, aquí se descarga tu certificado."); }
+
+  iniciar();
+})();
+</script>
+</body>
+</html>

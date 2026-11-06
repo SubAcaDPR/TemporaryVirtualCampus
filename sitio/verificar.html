@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<title>Verificar certificado</title>
+<link rel="icon" href="logo.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<a class="saltar" href="#contenido">Saltar al contenido</a>
+<div class="wrap estrecho">
+  <header id="barra"></header>
+  <main id="contenido">
+    <nav class="migas" aria-label="Ruta"><a href="index.html">Catálogo</a><span aria-hidden="true"> › </span><span aria-current="page">Verificar certificado</span></nav>
+    <h1>Verificar un certificado</h1>
+    <p class="sub">Escribe el código que aparece al pie del certificado para comprobar que es auténtico.</p>
+    <form id="f" class="card stack" style="margin-top:24px" novalidate>
+      <div class="campo"><label for="cod">Código del certificado</label>
+        <input id="cod" type="text" class="mayus" placeholder="C-XXXXXXXX" autocomplete="off" spellcheck="false" aria-describedby="e-cod">
+        <p class="err-campo" id="e-cod" hidden></p></div>
+      <div><button class="btn" type="submit">Verificar</button></div>
+      <div id="res" aria-live="polite"></div>
+    </form>
+  </main>
+  <footer id="pie"></footer>
+</div>
+<script src="config.js"></script>
+<script src="app.js"></script>
+<script>
+(() => {
+  const { S, api, h, barra } = App;
+  document.title = "Verificar certificado · " + S.institucion;
+  document.getElementById("pie").replaceChildren(h("p", {}, S.institucionCompleta || S.institucion));
+  barra(() => barra(() => {}));
+  const f = document.getElementById("f"), cod = document.getElementById("cod"), res = document.getElementById("res"), err = document.getElementById("e-cod");
+  cod.addEventListener("input", () => { err.hidden = true; cod.removeAttribute("aria-invalid"); });
+  async function verificar() {
+    const v = cod.value.trim().toUpperCase().replace(/\s+/g, "");
+    if (!v) { err.textContent = "Escribe el código del certificado."; err.hidden = false; cod.setAttribute("aria-invalid", "true"); cod.focus(); return; }
+    res.replaceChildren(h("p", { class: "msg" }, "Verificando…"));
+    try {
+      const r = await api("verificar", { codigo: v });
+      if (r.ok && r.valido) res.replaceChildren(h("div", { class: "nota ok stack" },
+        h("p", {}, h("b", {}, "✓ Certificado válido")),
+        h("p", {}, "Certificado de participación otorgado a ", h("b", {}, r.nombre), ` en el curso «${r.curso}», emitido el ${r.fecha}.`)));
+      else res.replaceChildren(h("p", { class: "nota warn" }, `No encontramos un certificado con el código ${v}. Revisa que esté escrito igual que en el documento (incluido el «C-» inicial).`));
+    } catch (e) {
+      res.replaceChildren(h("div", { class: "nota warn fila" }, h("span", {}, "No pudimos conectar con el servidor."), h("button", { class: "btn sm", type: "button", onclick: verificar }, "Reintentar")));
+    }
+  }
+  f.addEventListener("submit", e => { e.preventDefault(); verificar(); });
+  const c = new URLSearchParams(location.search).get("c");
+  if (c) { cod.value = c; verificar(); }
+})();
+</script>
+</body>
+</html>
